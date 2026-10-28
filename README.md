@@ -39,20 +39,34 @@ Everyone must sign in with a Google account on **@stayvista.com** or **@stayvist
 - **AGM notes are exempt** from this lock — anyone signed in can always add a note, at any time.
 - Every create, edit, note, and delete is written to an **audit trail** (a separate `audit_log` table, created automatically on first use) recording who did it, their role, what changed, and when. It's visible per-property in the "Activity" panel at the bottom of each property's detail view.
 
-### 4. Google Sheets auto-sync (optional)
+### 4. Google Sheets two-way sync (optional)
 
-There is no export button — instead, every time a property is created, edited, or deleted, the backend automatically clears and rewrites a tab named **Onboarding Tracker** in a Google Sheet you control, so the sheet is always current. It needs three environment variables; without them, the sync is silently skipped and everything else keeps working.
+The app keeps the **App Data** tab in a Google Sheet in step with the database, in both directions:
 
-1. In [Google Cloud Console](https://console.cloud.google.com/), create a project (or reuse one) and enable the **Google Sheets API**.
-2. Create a **Service Account** (IAM & Admin → Service Accounts), then create a JSON key for it and download it.
-3. Create a new Google Sheet (or use an existing one) and **share it** with the service account's email address (found in the JSON key as `client_email`) as an **Editor**.
-4. In Vercel's project → **Settings → Environment Variables**, add:
-   - `GOOGLE_SERVICE_ACCOUNT_EMAIL` — the `client_email` from the JSON key.
-   - `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` — the `private_key` from the JSON key, pasted as-is (keep the `\n` sequences — paste the whole string on one line).
-   - `GOOGLE_SHEET_ID` — the long ID in the sheet's URL: `docs.google.com/spreadsheets/d/`**`THIS_PART`**`/edit`.
-5. Redeploy.
+- **App → Sheet:** every save in the app rewrites the App Data tab.
+- **Sheet → App:** an edit on the App Data tab is pulled into the app within seconds (Apps Script trigger), and a catch-up pull runs every 5 minutes.
 
-From then on, saving any property anywhere in the app updates the sheet within a couple of seconds — nobody has to remember to export.
+Setup:
+
+1. In Google Cloud Console, enable the **Google Sheets API** on the project and create a **Service Account** (IAM & Admin → Service Accounts). Create a JSON key and download it.
+2. Share the Google Sheet with the service account's `client_email` as **Editor**.
+3. In Vercel → **Settings → Environment Variables**, add:
+   - `GOOGLE_SERVICE_ACCOUNT_JSON` — the whole JSON key file, pasted as one value.
+   - `SHEET_ID` — the ID from the sheet's URL.
+   - `SHEET_SYNC_SECRET` — any long random string (e.g. `openssl rand -base64 32`).
+4. Redeploy.
+5. In the sheet: **Extensions → Apps Script**, paste `apps-script/SheetSync.gs`, add the two Script Properties it describes (`SYNC_URL`, `SYNC_SECRET`), and run `installTriggers()` once.
+
+**Rules for sheet edits**
+
+- Edit only on the **App Data** tab. The `Property ID` column identifies each row; don't change it.
+- To add a property from the sheet, add a row with a blank `Property ID`. It is created in the app and gets its ID on the next sync.
+- `Overall Status`, `Pre-Onboarding Complete` and `AGM Notes` are read-only in the sheet. Add AGM notes in the app.
+- A sheet edit is **not** blocked by the 24-hour lock, but every sheet edit is recorded in the audit trail with its old and new values.
+- Deleting a row in the sheet does not delete the property. Delete properties in the app.
+- If the same cell is changed in both the app and the sheet between syncs, the sheet value wins. The audit entry lists it as a conflict.
+
+**Importing an existing tab (one-time, admins):** `POST /api/sheet/pull` with body `{"tab": "Onboarding Tracker"}` loads rows from that tab into an empty database. It's refused if the database already has properties.
 
 ## Brand
 
